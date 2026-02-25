@@ -1,0 +1,90 @@
+# [Project Name]
+
+> [One-line description: what this project IS and what it DOES.]
+
+## Commands
+
+```bash
+# Dev
+[command]
+# Test
+[command]
+# Lint / Format
+[command]
+# Build / Deploy
+[command]
+```
+
+## Architecture
+
+**Repo**: `[owner/repo-name]`
+
+[2-5 lines: stack, key frameworks, runtime. Enough to orient, not to teach.]
+
+```
+[project-name]/
+├── src/              # [what lives here]
+├── tests/            # [test framework, conventions]
+├── docs/             # Extended documentation (see below)
+│   ├── adr/          # Architectural Decision Records
+│   ├── specs/        # Feature and component specifications
+│   └── runbooks/     # Operational procedures
+├── .claude/
+│   └── commands/     # Slash commands
+└── [other key dirs]
+```
+
+## Code Style
+
+- [Language version, type system expectations]
+- [Import/module conventions]
+- [Naming conventions]
+- [Error handling pattern]
+
+## Workflow
+
+1. **Before coding**: Read relevant `docs/adr/` entries for files you'll touch. Propose a plan and wait for approval.
+2. Check `gh issue view <N>` for full context before starting any issue-tagged work.
+3. **Implementation**: Small, focused diffs. One concern per commit.
+4. **After changes**: Run tests. Run linter. Verify nothing breaks.
+5. **Commit**: Conventional commits (`feat:`, `fix:`, `refactor:`, `docs:`, `test:`).
+
+## Testing
+
+- [Test framework and how to run single tests]
+- [Coverage expectations]
+- [What MUST be tested vs what's optional]
+
+## Boundaries
+
+- YOU MUST NOT modify files in `[protected paths]` without explicit approval.
+- YOU MUST NOT add dependencies without stating why.
+- YOU MUST run tests before committing.
+- IMPORTANT: [Project-specific critical rule].
+
+## Context Pointers
+
+> Don't dump details here. Point to where they live.
+
+- Architecture decisions: `docs/adr/INDEX.md`
+- Component specs: `docs/specs/`
+- Environment setup: `docs/setup.md`
+- API conventions: `docs/api.md`
+- [Other relevant docs]
+
+## Current Focus
+
+> Update this section at the start/end of each working session.
+
+**Active**: #[N] [description]
+  - Next: [concrete task the agent can start immediately]
+  - Done when: [specific criteria]
+  - Issue: [URL or `gh issue view N`]
+**Last session**: [what was accomplished, any loose ends]
+**Next up**: [what comes after the active work]
+
+## Gotchas
+
+- [Thing that will waste time if you don't know about it]
+- [Non-obvious dependency or coupling]
+- [Environment quirk]

@@ -1,0 +1,286 @@
+## Technical spec: Personal Webhook Notification Receiver (Project A)
+
+### 0) Summary
+
+Build a small, hardened webhook receiver that runs locally on a macOS laptop and plays a sound when it receives an authenticated event. It must support multiple sources with different sounds and be safe to expose publicly via a reverse tunnel (e.g., Tailscale Funnel). The service should autostart on login and require no manual intervention.
+
+### 1) Goals
+
+* Accept webhook calls from “coding agents” and other automation via a stable HTTPS URL (provided by tunnel).
+* Authenticate requests (per-source secrets) and resist replay.
+* Play an audible ping on macOS.
+* Optional: different sounds by source.
+* Keep “canonical” hook config portable across machines/projects: hooks call a wrapper script; secrets are not stored in repo.
+
+### 2) Non-goals (explicitly out of scope)
+
+* Sticky tickets / open-resolved tracking, UI dashboards, mobile apps.
+* Notifications via OS Notification Center (sound-only is MVP; banner may be optional later).
+* Guaranteed delivery while laptop is asleep/offline (best-effort only).
+* Multi-user support.
+
+### 3) Operating model
+
+* The server listens **only on localhost**: `127.0.0.1:<port>`.
+* A tunnel publishes a public HTTPS endpoint to the localhost service.
+* The public endpoint will receive random internet traffic; therefore the server must enforce strict auth, replay limits, size limits, and rate limiting.
+
+### 4) Components
+
+1. **notify-server** (daemon)
+
+   * HTTP server
+   * request authentication & validation
+   * source→sound mapping
+   * plays sound using `afplay` on macOS
+   * structured logging
+2. **notify-send** (CLI wrapper for hooks)
+
+   * called by Claude Code hooks (and other tools)
+   * reads secrets from env (and optionally macOS Keychain)
+   * sends POST request with HMAC headers
+   * supports adding metadata (repo/context/event) without server needing it yet
+3. **launchd LaunchAgent**
+
+   * starts server on user login
+   * keeps it running (restart on crash)
+4. **config file**
+
+   * defines per-source secrets and sound files (or sound IDs)
+
+### 5) API & contract
+
+#### Endpoint
+
+* `POST /notify`
+
+#### Headers (required)
+
+* `X-Key-Id`: string (source identifier, e.g. `claude`, `ci`)
+* `X-Timestamp`: unix seconds (string or int)
+* `X-Signature`: base64(HMAC-SHA256(secret, `<timestamp>.<raw_body>`))
+
+#### Body (JSON)
+
+Minimal required fields:
+
+* `source` (string) — should match `X-Key-Id` (server should verify match)
+* `message` (string)
+
+Optional fields accepted (server may ignore for MVP, but should accept & validate types if present):
+
+* `event` (string) — e.g. `needs_input`, `done`, `error`
+* `repo` (string)
+* `context_id` (string)
+* `severity` (string enum suggestion: `info|warn|crit`)
+* `meta` (object) — free-form for future
+
+Example payload:
+
+```json
+{
+  "source": "claude",
+  "message": "Claude is waiting for your input",
+  "event": "needs_input",
+  "repo": "my-repo",
+  "context_id": "conv_123"
+}
+```
+
+#### Responses
+
+* `204 No Content` on success (fast return; sound playback can be synchronous but must be quick)
+* `401 Unauthorized` for auth failures
+* `413 Payload Too Large` if body exceeds limit
+* `429 Too Many Requests` if rate limited
+* `400 Bad Request` for invalid JSON/fields
+
+### 6) Security requirements (hardening checklist)
+
+* **Bind to localhost only** (no LAN exposure).
+* **Replay resistance**:
+
+  * reject if `abs(now - X-Timestamp) > 60s` (configurable).
+* **Signature verification**:
+
+  * constant-time compare.
+* **Body size limit**:
+
+  * max 4–8 KB (configurable).
+* **Rate limiting**:
+
+  * per `X-Key-Id` (and optionally per remote IP as seen by server; note tunnel may obscure IP).
+  * e.g. token bucket: 10/min burst 3 (configurable).
+* **Safe behavior**:
+
+  * payload must not influence command execution.
+  * sound selection must be server-configured per source; never accept arbitrary file paths from requests.
+* **Logging**:
+
+  * never log secrets, signatures, or full payload by default.
+  * log: timestamp, key id, result (ok/unauth/ratelimited), message length.
+* **Key rotation**:
+
+  * allow multiple active secrets per key id (optional, but recommended for smooth rotation).
+* **Fail closed**:
+
+  * on config load errors, refuse to start (or start with all requests denied).
+
+### 7) Config design
+
+Store in user’s home directory, not in repo.
+
+Config example (JSON or YAML):
+
+```json
+{
+  "listen_addr": "127.0.0.1:8666",
+  "max_body_bytes": 4096,
+  "max_skew_seconds": 60,
+  "rate_limit_per_minute": 10,
+  "rate_limit_burst": 3,
+  "senders": {
+    "claude": {
+      "secrets": ["<secret1>", "<secret2_optional_for_rotation>"],
+      "sound": "/Users/<you>/Library/Sounds/claude.wav"
+    },
+    "ci": {
+      "secrets": ["<secret>"],
+      "sound": "/Users/<you>/Library/Sounds/ci.wav"
+    }
+  },
+  "default_sound": "/System/Library/Sounds/Ping.aiff"
+}
+```
+
+### 8) macOS sound playback
+
+* Use `afplay <path>` (do not shell-expand; execute with argv array).
+* If sound missing/unplayable:
+
+  * fallback to `default_sound`
+  * still return success after auth (or return 500—choose and document; I’d return success but log error to avoid retry storms).
+
+### 9) Autostart
+
+* Provide a `launchd` LaunchAgent plist:
+
+  * `RunAtLoad = true`
+  * `KeepAlive = true`
+  * logs to `~/Library/Logs/notify-server.log` or via `StandardOutPath/StandardErrorPath`
+* Provide install instructions:
+
+  * copy plist to `~/Library/LaunchAgents/`
+  * `launchctl load -w ...` or modern equivalent
+
+### 10) Tunnel integration (documentation only)
+
+* Document that user will expose localhost via tunnel.
+* The server does not manage the tunnel.
+* Provide a quick “smoke test” using `curl` to localhost and to the public URL.
+
+### 11) Deliverables
+
+Repository layout:
+
+* `server/` (daemon code)
+* `client/` (notify-send wrapper)
+* `launchd/` (plist)
+* `README.md` (setup + security model + rotation + troubleshooting)
+* `examples/` (curl example + sample config)
+* Basic tests:
+
+  * signature verification
+  * timestamp window
+  * payload size limits
+  * source mismatch rejected
+  * rate limit behavior (unit-level if possible)
+
+### 12) Acceptance criteria
+
+* Running server locally, `POST /notify` with valid signature plays sound.
+* Invalid signature / stale timestamp / oversize payload fails with correct HTTP code and does not play sound.
+* Different `X-Key-Id` triggers different configured sound.
+* Server binds only to localhost and restarts automatically on crash/login.
+* `notify-send` can be called from any repo and does not require repo-local secrets.
+
+---
+
+## Pasteable prompt for Claude Code (senior→senior)
+
+Use this as your Claude Code task prompt:
+
+```text
+You are a senior engineer. Implement Project A: a hardened webhook notification receiver for macOS.
+
+Context
+- I want a single notification “hub” for coding agents (Claude Code hooks) and other automation.
+- MVP: sound-only “ping” on my Mac when an authenticated webhook arrives.
+- Stretch: different sounds per source (2–10 sources).
+- The service will be exposed publicly via a tunnel (e.g., Tailscale Funnel), so assume random internet traffic; bind the server only to 127.0.0.1.
+
+Deliverables
+1) notify-server daemon (macOS) listening on 127.0.0.1:8666 by default.
+2) notify-send CLI wrapper for use in hooks; reads secrets from env (NOT committed to repo).
+3) launchd LaunchAgent plist to start/keep server alive on login.
+4) README with setup, security model, tunnel notes, key rotation, troubleshooting.
+5) Unit tests for auth + replay + size + source mismatch + rate limiting.
+
+Technical requirements (must)
+- Endpoint: POST /notify
+- Headers required:
+  - X-Key-Id
+  - X-Timestamp (unix seconds)
+  - X-Signature = base64(HMAC-SHA256(secret, "<timestamp>.<raw_body>"))
+- Body JSON required: { "source": string, "message": string }
+  Optional fields accepted: event, repo, context_id, severity, meta (ignored for MVP but accepted)
+- Verify: source == X-Key-Id
+- Replay resistance: reject if abs(now - timestamp) > 60s (configurable)
+- Constant-time signature compare
+- Body size limit: default 4096 bytes (configurable)
+- Rate limit: token bucket per key-id, default 10/min burst 3 (configurable)
+- Do not ever execute arbitrary commands or accept a sound path from request body.
+  Sound selection is strictly server-configured per source.
+- Play sound with afplay using argv array (no shell=True)
+- Logging: do not log secrets/signatures or full payload; log outcomes + key-id + message length.
+- Return codes:
+  - 204 success
+  - 401 auth/replay/source mismatch
+  - 413 too large
+  - 429 rate limited
+  - 400 invalid JSON
+
+Config
+- Use a config file in user home (JSON or YAML) that includes:
+  - listen_addr, max_body_bytes, max_skew_seconds, rate_limit_per_minute, rate_limit_burst
+  - senders map: key-id -> { secrets: [..] (support multiple for rotation), sound: "/path/file" }
+  - default_sound fallback
+- Server should refuse to start if config missing/invalid (fail closed) OR start denying all requests; choose one and document.
+
+Implementation choice
+- Prefer a single Go binary (net/http) to minimize dependencies, unless you have a strong reason to use Python.
+- If Go: include a small internal HMAC verifier, JSON parsing, token bucket limiter, and afplay invocation.
+- If Python: keep deps minimal and document install; still must be launchd-friendly.
+
+Hook integration
+- notify-send should accept CLI args like:
+  --source, --message, --event, --repo, --context-id, --severity
+  It should compute headers and POST to NOTIFY_URL.
+- Secrets come from env: NOTIFY_KEY_ID, NOTIFY_SECRET (or per-source env), or from a local config file outside repos.
+- Provide example snippet for Claude Code hooks that calls notify-send.
+
+Docs
+- Include quickstart:
+  - install/build
+  - create config
+  - run server
+  - local curl test + notify-send test
+  - launchd install/enable
+  - tunnel exposure notes (public endpoint hits localhost)
+
+Do the work in a clean repo structure:
+- server/, client/, launchd/, examples/, README.md, tests/
+- Keep code readable and production-grade; handle errors carefully.
+- Provide a final checklist verifying acceptance criteria.
+```
+

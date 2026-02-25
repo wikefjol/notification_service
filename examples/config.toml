@@ -1,0 +1,37 @@
+# notify-server configuration
+#
+# Copy this file to ~/.config/notify-server/config.toml and customize.
+# The server will refuse to start if this file is missing or invalid.
+
+# Server bind address (localhost only for security)
+listen_addr = "127.0.0.1:8666"
+
+# Maximum request body size in bytes
+max_body_bytes = 4096
+
+# Maximum allowed timestamp skew in seconds (replay resistance)
+max_skew_seconds = 60
+
+# Rate limiting: tokens per minute per key-id
+rate_limit_per_minute = 10
+
+# Rate limiting: burst size per key-id
+rate_limit_burst = 3
+
+# Maximum entries in replay cache (LRU eviction)
+replay_cache_max_entries = 10000
+
+# Default sound to play when sender has no configured sound
+default_sound = "/System/Library/Sounds/Ping.aiff"
+
+# Sender configurations
+# Each sender has a unique key-id, one or more secrets (for rotation), and an optional sound.
+
+[senders.claude]
+# Multiple secrets allow for zero-downtime key rotation
+secrets = ["your-secret-here"]
+sound = "/System/Library/Sounds/Glass.aiff"
+
+[senders.ci]
+secrets = ["ci-secret-here"]
+sound = "/System/Library/Sounds/Submarine.aiff"
