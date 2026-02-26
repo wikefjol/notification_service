@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"time"
 )
@@ -106,9 +107,10 @@ func (s *Server) handleNotifyMethodNotAllowed(w http.ResponseWriter, r *http.Req
 
 // handleNotify processes notification requests.
 func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
-	// Validate Content-Type
+	// Validate Content-Type (accept charset parameters per RFC 7231)
 	contentType := r.Header.Get("Content-Type")
-	if contentType != "application/json" {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil || mediaType != "application/json" {
 		s.logger.Warn("invalid content-type",
 			"content_type", contentType,
 			"remote_addr", r.RemoteAddr,

@@ -133,6 +133,40 @@ func TestNotify_WrongContentType(t *testing.T) {
 	}
 }
 
+func TestNotify_ContentTypeWithCharset(t *testing.T) {
+	cfg := testConfig()
+	cfg.RateLimitBurst = 10 // Allow all test cases without rate limiting
+	srv := NewServer(cfg, discardLogger(), nil)
+
+	// Valid Content-Type values with charset parameters (per RFC 7231)
+	validTypes := []string{
+		"application/json",
+		"application/json; charset=utf-8",
+		"application/json; charset=UTF-8",
+		"application/json;charset=utf-8", // no space after semicolon
+		"APPLICATION/JSON",               // case insensitive media type
+		"Application/Json; Charset=utf-8",
+	}
+
+	for i, ct := range validTypes {
+		t.Run(ct, func(t *testing.T) {
+			// Use unique message to avoid replay cache rejection
+			body := `{"source": "test-agent", "message": "test-` + strconv.Itoa(i) + `"}`
+			req := httptest.NewRequest(http.MethodPost, "/notify", strings.NewReader(body))
+			req.Header.Set("Content-Type", ct)
+			signRequestHelper(req, []byte(body), "test-agent", "test-secret")
+			rec := httptest.NewRecorder()
+
+			srv.httpServer.Handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusNoContent {
+				t.Errorf("POST /notify with Content-Type %q: expected status %d, got %d",
+					ct, http.StatusNoContent, rec.Code)
+			}
+		})
+	}
+}
+
 func TestNotify_BodyTooLarge(t *testing.T) {
 	cfg := testConfig()
 	cfg.MaxBodyBytes = 100 // Small limit for testing
