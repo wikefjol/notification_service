@@ -16,6 +16,7 @@ type Server struct {
 	httpServer  *http.Server
 	logger      *slog.Logger
 	replayCache *ReplayCache
+	rateLimiter *RateLimiter
 }
 
 // NotifyRequest is the expected JSON payload for POST /notify.
@@ -34,10 +35,14 @@ func NewServer(cfg *Config, logger *slog.Logger) *Server {
 	ttl := time.Duration(cfg.MaxSkewSeconds*2) * time.Second
 	replayCache := NewReplayCache(cfg.ReplayCacheMaxEntries, ttl)
 
+	// Initialize rate limiter
+	rateLimiter := NewRateLimiter(cfg.RateLimitPerMinute, cfg.RateLimitBurst)
+
 	s := &Server{
 		config:      cfg,
 		logger:      logger,
 		replayCache: replayCache,
+		rateLimiter: rateLimiter,
 	}
 
 	mux := http.NewServeMux()
@@ -138,7 +143,16 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Rate limiting (issue #3)
+	// Rate limiting (after auth to avoid rate-limiting unauthenticated requests)
+	if !s.rateLimiter.Allow(req.Source) {
+		s.logger.Warn("rate limit exceeded",
+			"source", req.Source,
+			"remote_addr", r.RemoteAddr,
+		)
+		w.WriteHeader(http.StatusTooManyRequests)
+		return
+	}
+
 	// TODO: Sound playback (issue #6)
 
 	s.logger.Info("notification received",
