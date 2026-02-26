@@ -104,6 +104,13 @@ sudo cp notify-server /usr/local/bin/
 launchctl load -w ~/Library/LaunchAgents/com.user.notify-server.plist
 ```
 
+If `load -w` doesn't work on newer macOS, use the modern API:
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.user.notify-server.plist
+launchctl enable gui/$(id -u)/com.user.notify-server
+```
+
 ### Verify
 
 ```bash

@@ -27,5 +27,8 @@
         <key>HOME</key>
         <string>/Users/USER</string>
     </dict>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/USER</string>
 </dict>
 </plist>
