@@ -27,9 +27,13 @@ type NotifyRequest struct {
 }
 
 // NewServer creates a new Server with the given configuration.
-func NewServer(cfg *Config, logger *slog.Logger) *Server {
+// The provided context is used as the base context for cancellation on shutdown.
+func NewServer(cfg *Config, logger *slog.Logger, ctx context.Context) *Server {
 	if logger == nil {
 		logger = slog.Default()
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	// Initialize replay cache with TTL = 2 * max_skew_seconds
@@ -39,8 +43,8 @@ func NewServer(cfg *Config, logger *slog.Logger) *Server {
 	// Initialize rate limiter
 	rateLimiter := NewRateLimiter(cfg.RateLimitPerMinute, cfg.RateLimitBurst)
 
-	// Initialize sound player
-	soundPlayer := NewSoundPlayer(cfg, logger)
+	// Initialize sound player with base context
+	soundPlayer := NewSoundPlayer(cfg, logger, ctx)
 
 	s := &Server{
 		config:      cfg,
@@ -82,6 +86,12 @@ func (s *Server) Start() error {
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("server shutting down")
 	return s.httpServer.Shutdown(ctx)
+}
+
+// StopSounds cancels all in-flight sound playback and waits for completion.
+// This should be called after Shutdown() during graceful shutdown.
+func (s *Server) StopSounds() {
+	s.soundPlayer.Stop()
 }
 
 // handleHealthz responds with 200 OK for health checks.

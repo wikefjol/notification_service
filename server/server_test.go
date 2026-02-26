@@ -53,7 +53,7 @@ func signRequestHelper(req *http.Request, body []byte, keyID, secret string) {
 }
 
 func TestHealthz(t *testing.T) {
-	srv := NewServer(testConfig(), discardLogger())
+	srv := NewServer(testConfig(), discardLogger(), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
@@ -66,7 +66,7 @@ func TestHealthz(t *testing.T) {
 }
 
 func TestNotify_MethodNotAllowed(t *testing.T) {
-	srv := NewServer(testConfig(), discardLogger())
+	srv := NewServer(testConfig(), discardLogger(), nil)
 
 	methods := []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch}
 	for _, method := range methods {
@@ -88,7 +88,7 @@ func TestNotify_MethodNotAllowed(t *testing.T) {
 }
 
 func TestNotify_MissingContentType(t *testing.T) {
-	srv := NewServer(testConfig(), discardLogger())
+	srv := NewServer(testConfig(), discardLogger(), nil)
 
 	body := `{"source": "test-agent", "message": "hello"}`
 	req := httptest.NewRequest(http.MethodPost, "/notify", strings.NewReader(body))
@@ -107,7 +107,7 @@ func TestNotify_MissingContentType(t *testing.T) {
 }
 
 func TestNotify_WrongContentType(t *testing.T) {
-	srv := NewServer(testConfig(), discardLogger())
+	srv := NewServer(testConfig(), discardLogger(), nil)
 
 	wrongTypes := []string{
 		"text/plain",
@@ -136,7 +136,7 @@ func TestNotify_WrongContentType(t *testing.T) {
 func TestNotify_BodyTooLarge(t *testing.T) {
 	cfg := testConfig()
 	cfg.MaxBodyBytes = 100 // Small limit for testing
-	srv := NewServer(cfg, discardLogger())
+	srv := NewServer(cfg, discardLogger(), nil)
 
 	// Create a body larger than the limit
 	largeBody := `{"source": "test-agent", "message": "` + strings.Repeat("x", 200) + `"}`
@@ -156,7 +156,7 @@ func TestNotify_BodyTooLarge(t *testing.T) {
 }
 
 func TestNotify_InvalidJSON(t *testing.T) {
-	srv := NewServer(testConfig(), discardLogger())
+	srv := NewServer(testConfig(), discardLogger(), nil)
 
 	invalidBodies := []string{
 		"not json at all",
@@ -186,7 +186,7 @@ func TestNotify_InvalidJSON(t *testing.T) {
 }
 
 func TestNotify_MissingOrEmptySource(t *testing.T) {
-	srv := NewServer(testConfig(), discardLogger())
+	srv := NewServer(testConfig(), discardLogger(), nil)
 
 	// Per ADR-002: missing/empty source returns 401 (source mismatch)
 	bodies := []string{
@@ -214,7 +214,7 @@ func TestNotify_MissingOrEmptySource(t *testing.T) {
 }
 
 func TestNotify_ValidRequest(t *testing.T) {
-	srv := NewServer(testConfig(), discardLogger())
+	srv := NewServer(testConfig(), discardLogger(), nil)
 
 	body := `{"source": "test-agent", "message": "hello world"}`
 	req := httptest.NewRequest(http.MethodPost, "/notify", strings.NewReader(body))
@@ -236,7 +236,7 @@ func TestNotify_ValidRequest(t *testing.T) {
 func TestNotify_BodyAtExactLimit(t *testing.T) {
 	cfg := testConfig()
 	cfg.MaxBodyBytes = 100
-	srv := NewServer(cfg, discardLogger())
+	srv := NewServer(cfg, discardLogger(), nil)
 
 	// Create a body exactly at the limit
 	// JSON overhead: {"source":"test-agent","message":""} = 36 bytes
@@ -264,7 +264,7 @@ func TestNotify_BodyAtExactLimit(t *testing.T) {
 func TestNotify_BodyOneOverLimit(t *testing.T) {
 	cfg := testConfig()
 	cfg.MaxBodyBytes = 100
-	srv := NewServer(cfg, discardLogger())
+	srv := NewServer(cfg, discardLogger(), nil)
 
 	// Create a body one byte over the limit
 	body := bytes.Repeat([]byte("x"), 101)
@@ -281,7 +281,7 @@ func TestNotify_BodyOneOverLimit(t *testing.T) {
 }
 
 func TestServerTimeouts(t *testing.T) {
-	srv := NewServer(testConfig(), discardLogger())
+	srv := NewServer(testConfig(), discardLogger(), nil)
 
 	// Verify timeouts are set correctly per ADR-007
 	if srv.httpServer.ReadHeaderTimeout != 5*1e9 { // 5 seconds in nanoseconds
@@ -301,7 +301,7 @@ func TestServerTimeouts(t *testing.T) {
 func TestServerBindsToConfiguredAddress(t *testing.T) {
 	cfg := testConfig()
 	cfg.ListenAddr = "127.0.0.1:9999"
-	srv := NewServer(cfg, discardLogger())
+	srv := NewServer(cfg, discardLogger(), nil)
 
 	if srv.httpServer.Addr != "127.0.0.1:9999" {
 		t.Errorf("Server addr: expected %q, got %q", "127.0.0.1:9999", srv.httpServer.Addr)
@@ -309,7 +309,7 @@ func TestServerBindsToConfiguredAddress(t *testing.T) {
 }
 
 func TestNotify_EmptyBody(t *testing.T) {
-	srv := NewServer(testConfig(), discardLogger())
+	srv := NewServer(testConfig(), discardLogger(), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/notify", nil)
 	req.Header.Set("Content-Type", "application/json")
@@ -325,7 +325,7 @@ func TestNotify_EmptyBody(t *testing.T) {
 }
 
 func TestNotify_MissingAuth(t *testing.T) {
-	srv := NewServer(testConfig(), discardLogger())
+	srv := NewServer(testConfig(), discardLogger(), nil)
 
 	body := `{"source": "test-agent", "message": "hello"}`
 	req := httptest.NewRequest(http.MethodPost, "/notify", strings.NewReader(body))
@@ -345,7 +345,7 @@ func TestNotify_MissingAuth(t *testing.T) {
 }
 
 func TestNotify_InvalidAuth(t *testing.T) {
-	srv := NewServer(testConfig(), discardLogger())
+	srv := NewServer(testConfig(), discardLogger(), nil)
 
 	body := `{"source": "test-agent", "message": "hello"}`
 	req := httptest.NewRequest(http.MethodPost, "/notify", strings.NewReader(body))
@@ -366,7 +366,7 @@ func TestNotify_InvalidAuth(t *testing.T) {
 }
 
 func TestNotify_SourceMismatch(t *testing.T) {
-	srv := NewServer(testConfig(), discardLogger())
+	srv := NewServer(testConfig(), discardLogger(), nil)
 
 	// Body says "test-agent" but we sign as "other-agent"
 	body := `{"source": "other-agent", "message": "hello"}`

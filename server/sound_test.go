@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"sync"
@@ -25,7 +26,7 @@ func TestGetSoundPath(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	player := NewSoundPlayer(cfg, logger)
+	player := NewSoundPlayer(cfg, logger, nil)
 
 	tests := []struct {
 		name     string
@@ -68,7 +69,7 @@ func TestSemaphoreConcurrencyLimit(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	player := NewSoundPlayer(cfg, logger)
+	player := NewSoundPlayer(cfg, logger, nil)
 
 	// Fill the semaphore manually
 	player.sem <- struct{}{}
@@ -96,7 +97,7 @@ func TestPlaySkipsWhenSemaphoreFull(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	player := NewSoundPlayer(cfg, logger)
+	player := NewSoundPlayer(cfg, logger, nil)
 
 	// Fill the semaphore
 	player.sem <- struct{}{}
@@ -130,7 +131,7 @@ func TestConcurrentPlaybackLimit(t *testing.T) {
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	player := NewSoundPlayer(cfg, logger)
+	player := NewSoundPlayer(cfg, logger, nil)
 
 	// Track concurrent executions
 	var concurrent atomic.Int32
@@ -186,8 +187,109 @@ func TestNewSoundPlayerNilLogger(t *testing.T) {
 	}
 
 	// Should not panic with nil logger
-	player := NewSoundPlayer(cfg, nil)
+	player := NewSoundPlayer(cfg, nil, nil)
 	if player.logger == nil {
 		t.Error("expected default logger, got nil")
+	}
+}
+
+func TestSoundPlayerStop(t *testing.T) {
+	cfg := &Config{
+		DefaultSound: "/nonexistent/sound.wav",
+		Senders: map[string]SenderConfig{
+			"test": {Secrets: []string{"secret"}},
+		},
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	player := NewSoundPlayer(cfg, logger, nil)
+
+	// Stop should not block or panic even with no in-flight playback
+	done := make(chan struct{})
+	go func() {
+		player.Stop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Stop completed quickly (expected)
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Stop() blocked unexpectedly")
+	}
+}
+
+func TestPlaySkipsAfterStop(t *testing.T) {
+	cfg := &Config{
+		DefaultSound: "/nonexistent/sound.wav",
+		Senders: map[string]SenderConfig{
+			"test": {Secrets: []string{"secret"}},
+		},
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	player := NewSoundPlayer(cfg, logger, nil)
+
+	// Stop the player
+	player.Stop()
+
+	// Play should return immediately without spawning a goroutine
+	player.Play("test")
+
+	// The semaphore should still be empty (no goroutine acquired it)
+	select {
+	case player.sem <- struct{}{}:
+		// We could acquire it, meaning Play didn't
+		<-player.sem // release it
+	default:
+		t.Error("Play() acquired semaphore after Stop() was called")
+	}
+}
+
+func TestSoundPlayerContextCancellation(t *testing.T) {
+	cfg := &Config{
+		DefaultSound: "/nonexistent/sound.wav",
+		Senders: map[string]SenderConfig{
+			"test": {Secrets: []string{"secret"}},
+		},
+	}
+
+	// Create a context we can cancel
+	ctx, cancel := context.WithCancel(context.Background())
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	player := NewSoundPlayer(cfg, logger, ctx)
+
+	// Cancel the context
+	cancel()
+
+	// Play should skip because context is cancelled
+	player.Play("test")
+
+	// Give a moment for any (incorrect) goroutine to start
+	time.Sleep(10 * time.Millisecond)
+
+	// The semaphore should still be empty
+	select {
+	case player.sem <- struct{}{}:
+		<-player.sem
+	default:
+		t.Error("Play() acquired semaphore after context was cancelled")
+	}
+}
+
+func TestNewSoundPlayerNilContext(t *testing.T) {
+	cfg := &Config{
+		DefaultSound: "/default/sound.wav",
+		Senders:      map[string]SenderConfig{},
+	}
+
+	// Should not panic with nil context
+	player := NewSoundPlayer(cfg, nil, nil)
+	if player.ctx == nil {
+		t.Error("expected non-nil context, got nil")
+	}
+	if player.cancel == nil {
+		t.Error("expected non-nil cancel func, got nil")
 	}
 }
