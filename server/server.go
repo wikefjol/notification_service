@@ -153,6 +153,16 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate required message field (source validated in authenticate per ADR-002)
+	if req.Message == "" {
+		s.logger.Warn("missing required field",
+			"field", "message",
+			"remote_addr", r.RemoteAddr,
+		)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
 	// Authenticate request
 	if err := s.authenticate(r, body, req.Source); err != nil {
 		// All auth errors return 401 with empty body

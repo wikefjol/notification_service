@@ -247,6 +247,34 @@ func TestNotify_MissingOrEmptySource(t *testing.T) {
 	}
 }
 
+func TestNotify_MissingOrEmptyMessage(t *testing.T) {
+	srv := NewServer(testConfig(), discardLogger(), nil)
+
+	// Missing or empty message returns 400 Bad Request
+	bodies := []string{
+		`{"source": "test-agent"}`,              // missing message
+		`{"source": "test-agent", "message":""}`, // empty message
+	}
+
+	for _, body := range bodies {
+		t.Run(body, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/notify", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+
+			srv.httpServer.Handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("POST /notify with body %q: expected status %d, got %d",
+					body, http.StatusBadRequest, rec.Code)
+			}
+			if rec.Body.Len() != 0 {
+				t.Errorf("expected empty body, got %q", rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestNotify_ValidRequest(t *testing.T) {
 	srv := NewServer(testConfig(), discardLogger(), nil)
 
