@@ -4,6 +4,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 
@@ -35,6 +36,10 @@ type Config struct {
 
 	// Senders maps key-id to sender configuration.
 	Senders map[string]SenderConfig `toml:"senders"`
+
+	// AllowNonLocalhost permits binding to non-localhost addresses.
+	// This is a security risk and should only be used if you understand the implications.
+	AllowNonLocalhost bool `toml:"allow_non_localhost"`
 }
 
 // SenderConfig holds per-sender configuration.
@@ -131,5 +136,29 @@ func (c *Config) validate() error {
 		}
 	}
 
+	// Validate listen_addr is localhost-only unless explicitly overridden
+	if !c.AllowNonLocalhost && !isLocalhostAddr(c.ListenAddr) {
+		return fmt.Errorf("listen_addr %q is not a localhost address; "+
+			"binding to non-localhost exposes the server to the network which is a security risk; "+
+			"set allow_non_localhost = true in config to override", c.ListenAddr)
+	}
+
 	return nil
+}
+
+// isLocalhostAddr checks if the given address binds to localhost only.
+func isLocalhostAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		// If we can't parse it, assume it's not safe
+		return false
+	}
+
+	// Check for common localhost representations
+	switch host {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	default:
+		return false
+	}
 }

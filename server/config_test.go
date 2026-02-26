@@ -3,6 +3,7 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -205,6 +206,117 @@ func TestDefaultConfigPath(t *testing.T) {
 		t.Errorf("DefaultConfigPath() = %q, want to end with config.toml", path)
 	}
 	_ = expected // used for documentation
+}
+
+func TestLoadConfig_LocalhostAddresses(t *testing.T) {
+	tests := []struct {
+		name string
+		addr string
+	}{
+		{"IPv4 localhost", "127.0.0.1:8666"},
+		{"localhost hostname", "localhost:8666"},
+		{"IPv6 localhost", "[::1]:8666"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content := `
+listen_addr = "` + tt.addr + `"
+default_sound = "/System/Library/Sounds/Ping.aiff"
+
+[senders.test]
+secrets = ["secret"]
+`
+			path := writeTempConfig(t, content)
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatalf("expected %q to be valid localhost, got error: %v", tt.addr, err)
+			}
+			if cfg.ListenAddr != tt.addr {
+				t.Errorf("ListenAddr = %q, want %q", cfg.ListenAddr, tt.addr)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_NonLocalhostRejected(t *testing.T) {
+	tests := []struct {
+		name string
+		addr string
+	}{
+		{"all interfaces IPv4", "0.0.0.0:8666"},
+		{"all interfaces IPv6", "[::]:8666"},
+		{"private IP", "192.168.1.100:8666"},
+		{"public IP", "8.8.8.8:8666"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content := `
+listen_addr = "` + tt.addr + `"
+default_sound = "/System/Library/Sounds/Ping.aiff"
+
+[senders.test]
+secrets = ["secret"]
+`
+			path := writeTempConfig(t, content)
+			_, err := LoadConfig(path)
+			if err == nil {
+				t.Fatalf("expected %q to be rejected as non-localhost", tt.addr)
+			}
+			// Verify error message mentions the security concern
+			if !strings.Contains(err.Error(), "not a localhost address") {
+				t.Errorf("error should mention 'not a localhost address', got: %v", err)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_NonLocalhostWithOverride(t *testing.T) {
+	content := `
+listen_addr = "0.0.0.0:8666"
+allow_non_localhost = true
+default_sound = "/System/Library/Sounds/Ping.aiff"
+
+[senders.test]
+secrets = ["secret"]
+`
+	path := writeTempConfig(t, content)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("expected non-localhost with override to be valid, got error: %v", err)
+	}
+	if cfg.ListenAddr != "0.0.0.0:8666" {
+		t.Errorf("ListenAddr = %q, want %q", cfg.ListenAddr, "0.0.0.0:8666")
+	}
+	if !cfg.AllowNonLocalhost {
+		t.Error("AllowNonLocalhost should be true")
+	}
+}
+
+func TestIsLocalhostAddr(t *testing.T) {
+	tests := []struct {
+		addr string
+		want bool
+	}{
+		{"127.0.0.1:8666", true},
+		{"localhost:8666", true},
+		{"[::1]:8666", true},
+		{"0.0.0.0:8666", false},
+		{"[::]:8666", false},
+		{"192.168.1.1:8666", false},
+		{"invalid", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.addr, func(t *testing.T) {
+			got := isLocalhostAddr(tt.addr)
+			if got != tt.want {
+				t.Errorf("isLocalhostAddr(%q) = %v, want %v", tt.addr, got, tt.want)
+			}
+		})
+	}
 }
 
 // writeTempConfig writes content to a temporary file and returns the path.
