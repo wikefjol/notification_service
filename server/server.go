@@ -17,6 +17,7 @@ type Server struct {
 	logger      *slog.Logger
 	replayCache *ReplayCache
 	rateLimiter *RateLimiter
+	soundPlayer *SoundPlayer
 }
 
 // NotifyRequest is the expected JSON payload for POST /notify.
@@ -38,11 +39,15 @@ func NewServer(cfg *Config, logger *slog.Logger) *Server {
 	// Initialize rate limiter
 	rateLimiter := NewRateLimiter(cfg.RateLimitPerMinute, cfg.RateLimitBurst)
 
+	// Initialize sound player
+	soundPlayer := NewSoundPlayer(cfg, logger)
+
 	s := &Server{
 		config:      cfg,
 		logger:      logger,
 		replayCache: replayCache,
 		rateLimiter: rateLimiter,
+		soundPlayer: soundPlayer,
 	}
 
 	mux := http.NewServeMux()
@@ -153,7 +158,8 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Sound playback (issue #6)
+	// Play sound asynchronously (returns immediately)
+	s.soundPlayer.Play(req.Source)
 
 	s.logger.Info("notification received",
 		"source", req.Source,
