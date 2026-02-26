@@ -2,12 +2,17 @@ package server
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // testConfig returns a valid Config for testing.
@@ -32,6 +37,19 @@ func testConfig() *Config {
 // discardLogger returns a logger that discards all output.
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// signRequestHelper adds valid auth headers to a request for the given body and key.
+func signRequestHelper(req *http.Request, body []byte, keyID, secret string) {
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	message := timestamp + ".POST./notify." + string(body)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(message))
+	signature := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+
+	req.Header.Set(HeaderKeyID, keyID)
+	req.Header.Set(HeaderTimestamp, timestamp)
+	req.Header.Set(HeaderSignature, signature)
 }
 
 func TestHealthz(t *testing.T) {
@@ -167,11 +185,12 @@ func TestNotify_InvalidJSON(t *testing.T) {
 	}
 }
 
-func TestNotify_MissingSource(t *testing.T) {
+func TestNotify_MissingOrEmptySource(t *testing.T) {
 	srv := NewServer(testConfig(), discardLogger())
 
+	// Per ADR-002: missing/empty source returns 401 (source mismatch)
 	bodies := []string{
-		`{"message": "hello"}`,          // missing source
+		`{"message": "hello"}`,           // missing source
 		`{"source": "", "message": "x"}`, // empty source
 	}
 
@@ -179,13 +198,16 @@ func TestNotify_MissingSource(t *testing.T) {
 		t.Run(body, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/notify", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
+			// Add auth headers (signed for test-agent, but body has no/empty source)
+			signRequestHelper(req, []byte(body), "test-agent", "test-secret")
 			rec := httptest.NewRecorder()
 
 			srv.httpServer.Handler.ServeHTTP(rec, req)
 
-			if rec.Code != http.StatusBadRequest {
+			// Source mismatch/missing returns 401 per ADR-002
+			if rec.Code != http.StatusUnauthorized {
 				t.Errorf("POST /notify with body %q: expected status %d, got %d",
-					body, http.StatusBadRequest, rec.Code)
+					body, http.StatusUnauthorized, rec.Code)
 			}
 		})
 	}
@@ -197,12 +219,11 @@ func TestNotify_ValidRequest(t *testing.T) {
 	body := `{"source": "test-agent", "message": "hello world"}`
 	req := httptest.NewRequest(http.MethodPost, "/notify", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	signRequestHelper(req, []byte(body), "test-agent", "test-secret")
 	rec := httptest.NewRecorder()
 
 	srv.httpServer.Handler.ServeHTTP(rec, req)
 
-	// For now, without auth, valid JSON returns 204
-	// Once auth is implemented, this will need to change
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("POST /notify with valid body: expected status %d, got %d",
 			http.StatusNoContent, rec.Code)
@@ -229,6 +250,7 @@ func TestNotify_BodyAtExactLimit(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/notify", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	signRequestHelper(req, []byte(body), "test-agent", "test-secret")
 	rec := httptest.NewRecorder()
 
 	srv.httpServer.Handler.ServeHTTP(rec, req)
@@ -299,5 +321,65 @@ func TestNotify_EmptyBody(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("POST /notify with empty body: expected status %d, got %d",
 			http.StatusBadRequest, rec.Code)
+	}
+}
+
+func TestNotify_MissingAuth(t *testing.T) {
+	srv := NewServer(testConfig(), discardLogger())
+
+	body := `{"source": "test-agent", "message": "hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/notify", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	// No auth headers set
+	rec := httptest.NewRecorder()
+
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("POST /notify without auth: expected status %d, got %d",
+			http.StatusUnauthorized, rec.Code)
+	}
+	if rec.Body.Len() != 0 {
+		t.Errorf("expected empty body, got %q", rec.Body.String())
+	}
+}
+
+func TestNotify_InvalidAuth(t *testing.T) {
+	srv := NewServer(testConfig(), discardLogger())
+
+	body := `{"source": "test-agent", "message": "hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/notify", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	// Sign with wrong secret
+	signRequestHelper(req, []byte(body), "test-agent", "wrong-secret")
+	rec := httptest.NewRecorder()
+
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("POST /notify with invalid auth: expected status %d, got %d",
+			http.StatusUnauthorized, rec.Code)
+	}
+	if rec.Body.Len() != 0 {
+		t.Errorf("expected empty body, got %q", rec.Body.String())
+	}
+}
+
+func TestNotify_SourceMismatch(t *testing.T) {
+	srv := NewServer(testConfig(), discardLogger())
+
+	// Body says "test-agent" but we sign as "other-agent"
+	body := `{"source": "other-agent", "message": "hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/notify", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	signRequestHelper(req, []byte(body), "test-agent", "test-secret")
+	rec := httptest.NewRecorder()
+
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+
+	// Source mismatch returns 401
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("POST /notify with source mismatch: expected status %d, got %d",
+			http.StatusUnauthorized, rec.Code)
 	}
 }

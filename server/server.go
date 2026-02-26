@@ -12,9 +12,10 @@ import (
 
 // Server is the HTTP server for handling notification requests.
 type Server struct {
-	config     *Config
-	httpServer *http.Server
-	logger     *slog.Logger
+	config      *Config
+	httpServer  *http.Server
+	logger      *slog.Logger
+	replayCache *ReplayCache
 }
 
 // NotifyRequest is the expected JSON payload for POST /notify.
@@ -29,9 +30,14 @@ func NewServer(cfg *Config, logger *slog.Logger) *Server {
 		logger = slog.Default()
 	}
 
+	// Initialize replay cache with TTL = 2 * max_skew_seconds
+	ttl := time.Duration(cfg.MaxSkewSeconds*2) * time.Second
+	replayCache := NewReplayCache(cfg.ReplayCacheMaxEntries, ttl)
+
 	s := &Server{
-		config: cfg,
-		logger: logger,
+		config:      cfg,
+		logger:      logger,
+		replayCache: replayCache,
 	}
 
 	mux := http.NewServeMux()
@@ -125,16 +131,13 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate required fields
-	if req.Source == "" {
-		s.logger.Warn("missing source field",
-			"remote_addr", r.RemoteAddr,
-		)
-		w.WriteHeader(http.StatusBadRequest)
+	// Authenticate request
+	if err := s.authenticate(r, body, req.Source); err != nil {
+		// All auth errors return 401 with empty body
+		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 
-	// TODO: Authentication (issue #2)
 	// TODO: Rate limiting (issue #3)
 	// TODO: Sound playback (issue #6)
 
