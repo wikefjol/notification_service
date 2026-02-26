@@ -445,3 +445,110 @@ func TestNotify_SourceMismatch(t *testing.T) {
 			http.StatusUnauthorized, rec.Code)
 	}
 }
+
+func TestNotify_RateLimited(t *testing.T) {
+	cfg := testConfig()
+	cfg.RateLimitBurst = 2 // Low burst for testing
+	cfg.RateLimitPerMinute = 1
+	srv := NewServer(cfg, discardLogger(), nil)
+
+	// First two requests should succeed (within burst)
+	for i := 0; i < 2; i++ {
+		body := `{"source": "test-agent", "message": "request ` + strconv.Itoa(i) + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/notify", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		signRequestHelper(req, []byte(body), "test-agent", "test-secret")
+		rec := httptest.NewRecorder()
+
+		srv.httpServer.Handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("request %d: expected status %d, got %d", i+1, http.StatusNoContent, rec.Code)
+		}
+	}
+
+	// Third request should be rate limited
+	body := `{"source": "test-agent", "message": "rate limited"}`
+	req := httptest.NewRequest(http.MethodPost, "/notify", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	signRequestHelper(req, []byte(body), "test-agent", "test-secret")
+	rec := httptest.NewRecorder()
+
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("rate limited request: expected status %d, got %d",
+			http.StatusTooManyRequests, rec.Code)
+	}
+	if rec.Body.Len() != 0 {
+		t.Errorf("expected empty body, got %q", rec.Body.String())
+	}
+}
+
+func TestNotify_ReplayRejected(t *testing.T) {
+	srv := NewServer(testConfig(), discardLogger(), nil)
+
+	body := `{"source": "test-agent", "message": "replay test"}`
+	bodyBytes := []byte(body)
+
+	// Create a signed request
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	message := timestamp + ".POST./notify." + body
+	mac := hmac.New(sha256.New, []byte("test-secret"))
+	mac.Write([]byte(message))
+	signature := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+
+	// First request should succeed
+	req1 := httptest.NewRequest(http.MethodPost, "/notify", bytes.NewReader(bodyBytes))
+	req1.Header.Set("Content-Type", "application/json")
+	req1.Header.Set(HeaderKeyID, "test-agent")
+	req1.Header.Set(HeaderTimestamp, timestamp)
+	req1.Header.Set(HeaderSignature, signature)
+	rec1 := httptest.NewRecorder()
+
+	srv.httpServer.Handler.ServeHTTP(rec1, req1)
+
+	if rec1.Code != http.StatusNoContent {
+		t.Fatalf("first request: expected status %d, got %d", http.StatusNoContent, rec1.Code)
+	}
+
+	// Replay (exact same request) should be rejected
+	req2 := httptest.NewRequest(http.MethodPost, "/notify", bytes.NewReader(bodyBytes))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set(HeaderKeyID, "test-agent")
+	req2.Header.Set(HeaderTimestamp, timestamp)
+	req2.Header.Set(HeaderSignature, signature)
+	rec2 := httptest.NewRecorder()
+
+	srv.httpServer.Handler.ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusUnauthorized {
+		t.Errorf("replay request: expected status %d, got %d",
+			http.StatusUnauthorized, rec2.Code)
+	}
+	if rec2.Body.Len() != 0 {
+		t.Errorf("expected empty body, got %q", rec2.Body.String())
+	}
+}
+
+func TestNotify_UnknownSender(t *testing.T) {
+	srv := NewServer(testConfig(), discardLogger(), nil)
+
+	// Request with unknown sender (not in config)
+	body := `{"source": "unknown-sender", "message": "hello"}`
+	req := httptest.NewRequest(http.MethodPost, "/notify", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	// Sign with any secret - doesn't matter since sender is unknown
+	signRequestHelper(req, []byte(body), "unknown-sender", "any-secret")
+	rec := httptest.NewRecorder()
+
+	srv.httpServer.Handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("unknown sender: expected status %d, got %d",
+			http.StatusUnauthorized, rec.Code)
+	}
+	if rec.Body.Len() != 0 {
+		t.Errorf("expected empty body, got %q", rec.Body.String())
+	}
+}
