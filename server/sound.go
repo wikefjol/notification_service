@@ -124,7 +124,8 @@ func (p *SoundPlayer) executeAfplay(soundPath string) error {
 
 	// Use exec.CommandContext with argv array (no shell expansion)
 	// This is critical for security - never use shell=true or command strings
-	cmd := exec.CommandContext(ctx, "afplay", soundPath)
+	// -v 5 increases volume (default is 1, multiplier on system volume)
+	cmd := exec.CommandContext(ctx, "afplay", "-v", "5", soundPath)
 
 	return cmd.Run()
 }

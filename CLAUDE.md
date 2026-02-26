@@ -78,12 +78,12 @@ Required coverage:
 
 ## Current Focus
 
-**Active**: Initial implementation
-  - Next: Implement server with POST /notify endpoint
-  - Done when: Server validates auth, plays sound, returns correct HTTP codes
-  - Issue: N/A (greenfield)
-**Last session**: Repository initialized with spec
-**Next up**: Client CLI (notify-send)
+**Active**: Tailscale Funnel setup (remote notifications)
+  - Blocked: DNS not resolving publicly (`mbp.tailf0fb1e.ts.net` returns NXDOMAIN)
+  - Likely cause: DNS propagation delay or eduVPN conflict on remote machine
+  - Next: Test from phone on mobile data, or wait for DNS propagation
+**Last session**: 2026-02-26 - see `docs/session-2026-02-26.md`
+**Done**: Server, client, launchd auto-start, local notifications working
 
 ## Gotchas
 
